@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: warehouse-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-warehouse_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-warehouse_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-warehouse_user} -d ${POSTGRES_DB:-warehouse_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: warehouse-backend
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-warehouse_user}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-warehouse_db}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:?Set bootstrap admin details in .env on first startup}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Set bootstrap admin details in .env on first startup}
+      BOOTSTRAP_ADMIN_EMPLOYEE_ID: ${BOOTSTRAP_ADMIN_EMPLOYEE_ID:?Set bootstrap admin details in .env on first startup}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:?Set bootstrap admin details in .env on first startup}
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 60
+      TIMEZONE: ${TIMEZONE:-Asia/Riyadh}
+      DEFAULT_HOLD_PERIOD_HOURS: ${DEFAULT_HOLD_PERIOD_HOURS:-48}
+      QC_HOLD_PERIOD_HOURS: ${QC_HOLD_PERIOD_HOURS:-24}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: sh -c "alembic upgrade head && python seed_data.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    container_name: warehouse-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
